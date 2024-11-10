@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Acceptance Testing Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #chart {
+            width: 600px;
+            height: 400px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        .pass {
+            background-color: #c8e6c9;
+        }
+        .fail {
+            background-color: #ffcdd2;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>User Acceptance Testing Tool</h1>
+
+    <h2>Upload Log File and BLC File for Test Cases & Performance Visualization</h2>
+    <input type="file" id="logFile" accept=".txt">
+    <input type="file" id="blcFile" accept=".blc">
+    <button id="processFiles">Process Files</button>
+
+    <canvas id="chart"></canvas>
+    <div id="testCaseContainer"></div>
+
+    <script>
+        let testCases = [];
+        let conditions = {};
+        let expectedConditions = [];
+
+        document.getElementById('processFiles').addEventListener('click', function() {
+            const logFile = document.getElementById('logFile').files[0];
+            const blcFile = document.getElementById('blcFile').files[0];
+
+            if (!logFile || !blcFile) {
+                alert('Please select both log and .blc files.');
+                return;
+            }
+
+            const blcReader = new FileReader();
+            blcReader.onload = function(event) {
+                parseBlcFile(event.target.result);
+                const logReader = new FileReader();
+                logReader.onload = function(e) {
+                    const data = parseLogFile(e.target.result);
+                    visualizeData(data);
+                    generateTestCases(data);
+                    displayTestCases();
+                };
+                logReader.readAsText(logFile);
+            };
+            blcReader.readAsText(blcFile);
+        });
+
+        function parseBlcFile(content) {
+            const abortCondition = /when\s+(.*)\s+abort/g;
+            let match;
+            expectedConditions = [];
+            while ((match = abortCondition.exec(content)) !== null) {
+                const condition = match[1].trim();
+                expectedConditions.push(condition);
+                condition.split('or').forEach(cond => {
+                    cond = cond.trim();
+                    const [varName, operator, value] = cond.split(/ (>=?|<=?|==|!=) /);
+                    if (operator === '>=' || operator === '>') {
+                        conditions[varName] = parseInt(value);
+                    }
+                });
+            }
+            console.log('Testing conditions:', conditions);
+        }
+
+        // Updated parseLogFile function to handle different formats
+        function parseLogFile(content) {
+            const lines = content.split('\n');
+            const data = [];
+            const logEntryPattern = /x\s*[:=]\s*(\d+)\s*,\s*y\s*[:=]\s*(\d+)/; // Flexible regex for x and y values
+
+            for (const line of lines) {
+                if (line.trim()) {
+                    const match = line.match(logEntryPattern);
+                    if (match) {
+                        const x = parseInt(match[1].trim());
+                        const y = parseInt(match[2].trim());
+                        data.push({ timestamp: data.length, x: x, y: y });
+                    }
+                }
+            }
+            return data;
+        }
+
+        function visualizeData(data) {
+            const chartCanvas = document.getElementById('chart').getContext('2d');
+
+            const filteredData = data.filter(entry => evaluateConditions(entry.x, entry.y));
+
+            const timestamps = filteredData.map(entry => entry.timestamp);
+            const xValues = filteredData.map(entry => entry.x);
+            const yValues = filteredData.map(entry => entry.y);
+
+            if (window.chartInstance) {
+                window.chartInstance.destroy();
+            }
+
+            window.chartInstance = new Chart(chartCanvas, {
+                type: 'line',
+                data: {
+                    labels: timestamps,
+                    datasets: [
+                        {
+                            label: 'X Values',
+                            data: xValues,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            fill: true,
+                        },
+                        {
+                            label: 'Y Values',
+                            data: yValues,
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                            fill: true,
+                        }
+                    ]
+                },
+                options: {
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Timestamp'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Values'
+                            },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateTestCases(data) {
+            testCases = [];
+            data.forEach((entry, index) => {
+                const testCase = {
+                    testName: `Test Case ${index + 1}`,
+                    expectedResult: expectedConditions.join(' or '),
+                    actualResult: `x: ${entry.x}, y: ${entry.y}`,
+                    result: deriveTestCaseResult(entry.x, entry.y)
+                };
+                testCases.push(testCase);
+            });
+        }
+
+        function evaluateConditions(x, y) {
+            let result = true;
+            expectedConditions.forEach(condition => {
+                const jsCondition = condition
+                    .replace(/or/g, '||')
+                    .replace(/and/g, '&&');
+                const evaluatedCondition = eval(jsCondition.replace(/x/g, x).replace(/y/g, y));
+                result = result && evaluatedCondition;
+            });
+            return !result; // Return true if conditions fail (indicating a Pass)
+        }
+
+        function deriveTestCaseResult(x, y) {
+            return evaluateConditions(x, y) ? 'Pass' : 'Fail';
+        }
+
+        function displayTestCases() {
+            const container = document.getElementById('testCaseContainer');
+            container.innerHTML = '';
+            const table = document.createElement('table');
+
+            const headerRow = document.createElement('tr');
+            const headers = ['Test Case', 'Expected Result', 'Actual Result', 'Result'];
+            headers.forEach(headerText => {
+                const th = document.createElement('th');
+                th.innerText = headerText;
+                headerRow.appendChild(th);
+            });
+            table.appendChild(headerRow);
+
+            testCases.forEach(testCase => {
+                const row = document.createElement('tr');
+                row.classList.add(testCase.result === 'Pass' ? 'pass' : 'fail');
+
+                const tdTestName = document.createElement('td');
+                tdTestName.innerText = testCase.testName;
+                const tdExpected = document.createElement('td');
+                tdExpected.innerText = testCase.expectedResult;
+                const tdActual = document.createElement('td');
+                tdActual.innerText = testCase.actualResult;
+                const tdResult = document.createElement('td');
+                tdResult.innerText = testCase.result;
+
+                row.appendChild(tdTestName);
+                row.appendChild(tdExpected);
+                row.appendChild(tdActual);
+                row.appendChild(tdResult);
+
+                table.appendChild(row);
+            });
+
+            container.appendChild(table);
+        }
+    </script>
+</body>
+</html>

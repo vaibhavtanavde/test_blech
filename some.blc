@@ -1,0 +1,21 @@
+activity inc()(x: int32)
+  repeat
+    x = x + 1
+    await true
+  end
+end
+
+@[EntryPoint]
+activity Ctrl()(x: int32, y: int32)
+  y = 0
+  x = 0
+  await true
+
+  when y >= 5 or x >= 5 abort
+    cobegin
+      run inc()(x)
+    with
+      run inc()(y)
+    end
+  end
+end
